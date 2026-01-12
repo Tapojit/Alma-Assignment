@@ -8,10 +8,10 @@ from pydantic import BaseModel, Field
 from dotenv import load_dotenv
 import time
 
-# Load environment variables
+
 load_dotenv()
 
-# Configure Gemini client
+
 GOOGLE_AI_API_KEY = os.environ.get("GOOGLE_AI_API_KEY")
 if not GOOGLE_AI_API_KEY:
     raise ValueError("GOOGLE_AI_API_KEY environment variable not set")
@@ -103,9 +103,12 @@ class FormA28Data(BaseModel):
     client_apt_ste_flr: Optional[str] = Field(
         None, description="Client's apartment/suite/floor")
     client_city: Optional[str] = Field(None, description="Client's city")
-    client_state: Optional[str] = Field(None, description="Client's state")
+    client_state: Optional[str] = Field(
+        None,
+        description="Client's state or province"
+    )
     client_zip_code: Optional[str] = Field(
-        None, description="Client's ZIP code")
+        None, description="Client's ZIP Code (US) or Postal Code (international)")
     client_country: Optional[str] = Field(None, description="Client's country")
     client_uscis_account: Optional[str] = Field(
         None, description="Client's USCIS Online Account Number")
@@ -119,8 +122,6 @@ def upload_document_to_gemini(file_path: str):
         raise ValueError(f"File not found: {file_path}")
 
     print(f"Uploading {file_path} to Gemini...")
-
-    # Upload file using new SDK
     uploaded_file = client.files.upload(file=file_path)
 
     # Wait for file processing
@@ -218,7 +219,11 @@ Look for "Information About Client" or "Part 3" or "Part 4" sections:
 5. Distinguish between ATTORNEY information (Part 1-2) and CLIENT information (Part 3-4)
 6. The client is the person being represented (Joe Jonas in the example)
 7. The attorney is the legal representative (Barbara Smith in the example)
-8. Return null for any fields not found
+8. **CRITICAL**: For client_zip_code, check BOTH fields:
+   - Field 13.e "ZIP Code" (for US addresses)
+   - Field 13.g "Postal Code" (for international addresses like Australia, Canada, UK)
+   - Extract whichever one has a value
+9. Return null for any fields not found
 
 Return a JSON object with these exact field names."""
 
