@@ -4,3 +4,4 @@ uvicorn[standard]
 pydantic
 python-multipart
 sse-starlette
+google-genai==1.57.0
