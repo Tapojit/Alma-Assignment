@@ -107,44 +107,58 @@ class FormPopulator:
         print(
             f"  Saved form HTML to /tmp/form_debug.html ({len(form_html)} chars)")
 
-        prompt = f"""You are a form-filling expert. Analyze this HTML form and create Playwright fill commands.
+        prompt = f"""You are a form-filling expert. Generate Playwright commands for ALL fields.
 
 HTML Form:
-{form_html[:20000]}
+{form_html[:25000]}
 
-Data to Fill (field_name: value):
+Data to Fill:
 {json.dumps(data_dict, indent=2)}
 
-CRITICAL INSTRUCTIONS:
-1. Find the ACTUAL input/select/textarea elements in the HTML
-2. For each data field, identify the matching form field by:
-   - Looking at input "name" attributes
-   - Looking at input "id" attributes  
-   - Looking at input "placeholder" text
-   - Looking at nearby <label> text
-   - Looking at data-* attributes
+EXACT FIELD IDS (from the HTML above - use these EXACT selectors):
 
-3. Field matching hints:
-   - "attorney_family_name" → look for inputs related to attorney/lawyer/representative last name
-   - "attorney_given_name" → attorney first name
-   - "client_family_name" → client/applicant/beneficiary last name
-   - "client_given_name" → client first name
-   - etc.
+ATTORNEY SECTION (Part 1):
+- attorney_family_name → input[id='family-name']
+- attorney_given_name → input[id='given-name']
+- attorney_middle_name → input[id='middle-name']
+- attorney_street_number → input[id='street-number']
+- attorney_city → input[id='city']
+- attorney_state → select[id='state'] VALUE (e.g., "CA" not "California")
+- attorney_zip_code → input[id='zip']
+- attorney_country → input[id='country']
+- attorney_daytime_phone → input[id='daytime-phone']
+- attorney_mobile_phone → input[id='mobile-phone']
+- attorney_email → input[id='email']
 
-4. Generate SPECIFIC CSS selectors:
-   ✓ GOOD: input[name="attorneyLastName"], input[id="clientFirstName"]
-   ✗ BAD: input[name="attorney_family_name"] (if that name doesn't exist in HTML)
+ATTORNEY ELIGIBILITY (Part 2):
+- attorney_licensing_authority → input[id='licensing-authority']
+- attorney_bar_number → input[id='bar-number']
+- attorney_law_firm → input[id='law-firm']
+- attorney_subject_to_restrictions → CHECK input[id='not-subject'] if value="am not" OR CHECK input[id='am-subject'] if value="am"
 
-5. Return a JSON array of commands. Each command MUST have:
-   - "selector": Valid CSS selector that EXISTS in the HTML
-   - "value": The value to fill
+BENEFICIARY (Part 3) - USE CLIENT DATA (they're the same person):
+- client_family_name → input[id='passport-surname']
+- client_given_name → input[id='passport-given-names']
 
-IMPORTANT: Only include fields you can ACTUALLY FIND in the HTML above.
+ACTION TYPES:
+- "action": "fill" for text/email/tel inputs
+- "action": "select" for dropdowns (use VALUE like "CA", "M", "F")
+- "action": "check" for checkboxes
 
-Return ONLY a valid JSON array, no markdown, no explanation:
+CRITICAL RULES:
+1. Generate commands for ALL {len(data_dict)} fields
+2. For checkboxes, use "action": "check" (no value needed)
+3. For selects, use VALUE not display text ("CA" not "California")
+4. Use the EXACT selectors listed above
+
+Return ONLY valid JSON:
 [
-  {{"selector": "input[name='actualFieldName']", "value": "Smith"}},
-  {{"selector": "input[id='anotherRealField']", "value": "Barbara"}}
+  {{"action": "fill", "selector": "input[id='family-name']", "value": "Smith"}},
+  {{"action": "fill", "selector": "input[id='daytime-phone']", "value": "+1234567890"}},
+  {{"action": "select", "selector": "select[id='state']", "value": "CA"}},
+  {{"action": "check", "selector": "input[id='not-subject']"}},
+  {{"action": "fill", "selector": "input[id='passport-surname']", "value": "Jonas"}},
+  ...
 ]"""
 
         response = self.gemini.models.generate_content(
@@ -160,13 +174,16 @@ Return ONLY a valid JSON array, no markdown, no explanation:
 
         try:
             commands = json.loads(response.text)
-            print(f"  Gemini generated {len(commands)} fill commands")
+            print(
+                f"  Gemini generated {len(commands)} fill commands (expected {len(data_dict)})")
 
             # Print first few commands for debugging
             if commands:
                 print(f"  Sample commands:")
-                for cmd in commands[:3]:
-                    print(f"    - {cmd.get('selector')} = {cmd.get('value')}")
+                for cmd in commands[:5]:
+                    action_type = cmd.get('action', 'fill')
+                    print(
+                        f"    - [{action_type.upper()}] {cmd.get('selector')} = {cmd.get('value')}")
 
             return commands
         except Exception as e:
@@ -179,17 +196,31 @@ Return ONLY a valid JSON array, no markdown, no explanation:
         filled = 0
 
         for cmd in commands:
+            action = cmd.get("action", "fill")
             selector = cmd.get("selector")
             value = cmd.get("value")
 
-            if not selector or value is None:
+            if not selector:
                 continue
 
             try:
                 if page.locator(selector).count() > 0:
-                    page.fill(selector, str(value), timeout=5000)
-                    print(f"  ✓ {selector} = {value}")
-                    filled += 1
+                    if action == "select":
+                        # Handle select dropdowns
+                        page.select_option(selector, value, timeout=5000)
+                        print(f"  ✓ [SELECT] {selector} = {value}")
+                        filled += 1
+                    elif action == "check":
+                        # Handle checkboxes
+                        page.check(selector, timeout=5000)
+                        print(f"  ✓ [CHECK] {selector}")
+                        filled += 1
+                    else:
+                        # Handle input/textarea (fill)
+                        if value is not None:
+                            page.fill(selector, str(value), timeout=5000)
+                            print(f"  ✓ [FILL] {selector} = {value}")
+                            filled += 1
                 else:
                     print(f"  ⊘ {selector} (not found)")
             except Exception as e:
