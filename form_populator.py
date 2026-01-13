@@ -1,8 +1,3 @@
-"""
-Form Population Module using Browserbase
-Uses LLM to intelligently match form fields
-"""
-
 from playwright.sync_api import sync_playwright
 from browserbase import Browserbase
 from models import FormA28Data
@@ -34,7 +29,7 @@ class FormPopulator:
         self.project_id = project_id
         self.gemini = genai.Client(api_key=gemini_key)
 
-    def populate_form(self, data: FormA28Data) -> str:
+    def populate_form(self, data: FormA28Data) -> dict:
         """
         Populate the web form using Browserbase
 
@@ -42,12 +37,19 @@ class FormPopulator:
             data: FormA28Data object with extracted information
 
         Returns:
-            str: Path to the screenshot file
+            dict: {"screenshot": path, "session_url": url, "session_id": id}
         """
         try:
             # Create Browserbase session
             print("Creating Browserbase session...")
             session = self.bb.sessions.create(project_id=self.project_id)
+
+            session_id = session.id
+            # Browserbase session viewing URL
+            session_url = f"https://www.browserbase.com/sessions/{session_id}"
+
+            print(f"Session ID: {session_id}")
+            print(f"View session: {session_url}")
 
             with sync_playwright() as playwright:
                 # Connect to remote browser
@@ -86,9 +88,17 @@ class FormPopulator:
                 page.screenshot(path=screenshot_path, full_page=True)
 
                 print(f"Form populated successfully! ({filled} fields filled)")
-                browser.close()
+                print(f"\nView live session: {session_url}")
 
-                return screenshot_path
+                # Note: Don't close browser so user can inspect
+                # browser.close()
+
+                return {
+                    "screenshot": screenshot_path,
+                    "session_url": session_url,
+                    "session_id": session_id,
+                    "fields_filled": filled
+                }
 
         except Exception as e:
             print(f"Form population error: {str(e)}")
@@ -107,57 +117,55 @@ class FormPopulator:
         print(
             f"  Saved form HTML to /tmp/form_debug.html ({len(form_html)} chars)")
 
-        prompt = f"""You are a form-filling expert. Generate Playwright commands for ALL fields.
+        prompt = f"""You are a form-filling expert. Analyze this HTML form and generate Playwright commands to fill it with the provided data.
 
 HTML Form:
 {form_html[:25000]}
 
-Data to Fill:
+Data to Fill (field_name: value):
 {json.dumps(data_dict, indent=2)}
 
-EXACT FIELD IDS (from the HTML above - use these EXACT selectors):
+YOUR TASK:
+1. Analyze the HTML form above to find all input, select, and textarea elements
+2. For each field in the data, find the best matching form element by examining:
+   - Element "id" attributes
+   - Element "name" attributes  
+   - Element "placeholder" text
+   - Nearby <label> text
+   - Element "aria-label" attributes
+   - Semantic meaning of the field
 
-ATTORNEY SECTION (Part 1):
-- attorney_family_name → input[id='family-name']
-- attorney_given_name → input[id='given-name']
-- attorney_middle_name → input[id='middle-name']
-- attorney_street_number → input[id='street-number']
-- attorney_city → input[id='city']
-- attorney_state → select[id='state'] VALUE (e.g., "CA" not "California")
-- attorney_zip_code → input[id='zip']
-- attorney_country → input[id='country']
-- attorney_daytime_phone → input[id='daytime-phone']
-- attorney_mobile_phone → input[id='mobile-phone']
-- attorney_email → input[id='email']
+3. Match data fields to form fields intelligently:
+   - "attorney_family_name" → look for attorney/lawyer/representative last name fields
+   - "attorney_given_name" → look for attorney/lawyer/representative first name fields
+   - "attorney_email" → look for attorney/lawyer/representative email fields
+   - "client_family_name" → look for client/applicant/beneficiary last name fields
+   - "client_given_name" → look for client/applicant/beneficiary first name fields
+   - etc. (use semantic understanding for all fields)
 
-ATTORNEY ELIGIBILITY (Part 2):
-- attorney_licensing_authority → input[id='licensing-authority']
-- attorney_bar_number → input[id='bar-number']
-- attorney_law_firm → input[id='law-firm']
-- attorney_subject_to_restrictions → CHECK input[id='not-subject'] if value="am not" OR CHECK input[id='am-subject'] if value="am"
+4. Generate commands with the appropriate action type:
+   - "action": "fill" for <input type="text">, <input type="email">, <input type="tel">, <textarea>
+   - "action": "select" for <select> dropdowns (use the VALUE attribute, e.g., "CA" not "California")
+   - "action": "check" for <input type="checkbox"> (when field value suggests it should be checked)
 
-BENEFICIARY (Part 3) - USE CLIENT DATA (they're the same person):
-- client_family_name → input[id='passport-surname']
-- client_given_name → input[id='passport-given-names']
-
-ACTION TYPES:
-- "action": "fill" for text/email/tel inputs
-- "action": "select" for dropdowns (use VALUE like "CA", "M", "F")
-- "action": "check" for checkboxes
+5. Generate SPECIFIC CSS selectors that EXIST in the HTML:
+   - Prefer selectors by "id": input[id='firstName']
+   - Fallback to "name": input[name='first_name']
+   - Use other attributes if needed: input[placeholder='First Name']
 
 CRITICAL RULES:
-1. Generate commands for ALL {len(data_dict)} fields
-2. For checkboxes, use "action": "check" (no value needed)
-3. For selects, use VALUE not display text ("CA" not "California")
-4. Use the EXACT selectors listed above
+- Analyze the ACTUAL HTML provided - don't assume field names
+- Only generate commands for fields that EXIST in the HTML
+- If a field can't be matched, skip it (don't generate a command)
+- For checkboxes, determine if they should be checked based on the field value
+- For selects, use the VALUE attribute from the <option> tags
+- Match ALL {len(data_dict)} data fields if possible
 
-Return ONLY valid JSON:
+Return ONLY a valid JSON array:
 [
-  {{"action": "fill", "selector": "input[id='family-name']", "value": "Smith"}},
-  {{"action": "fill", "selector": "input[id='daytime-phone']", "value": "+1234567890"}},
-  {{"action": "select", "selector": "select[id='state']", "value": "CA"}},
-  {{"action": "check", "selector": "input[id='not-subject']"}},
-  {{"action": "fill", "selector": "input[id='passport-surname']", "value": "Jonas"}},
+  {{"action": "fill", "selector": "input[id='actualFieldId']", "value": "Smith"}},
+  {{"action": "select", "selector": "select[name='state']", "value": "CA"}},
+  {{"action": "check", "selector": "input[id='checkboxId']"}},
   ...
 ]"""
 

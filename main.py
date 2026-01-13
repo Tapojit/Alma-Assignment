@@ -179,9 +179,9 @@ def process_documents(passport_file, g28_file):
         # Convert to dict for JSON display
         result = extracted_data.model_dump()
 
-        status = "✓ Data extraction complete. Click 'Populate Form' to populate the form."
+        status = "✓ Data extraction complete. Click 'Submit Form' to populate the form."
 
-        # Make Populate Form button visible
+        # Make Submit Form button visible
         return status, result, gr.update(visible=True)
 
     except Exception as e:
@@ -189,33 +189,70 @@ def process_documents(passport_file, g28_file):
         return f"✗ Error: {str(e)}", None, gr.update(visible=False)
 
 
-def submit_form():
+def submit_form(form_url: str):
     """Populate form using Browserbase"""
     global current_extracted_data
 
     if current_extracted_data is None:
-        return "✗ No data extracted. Please extract data first.", None
+        return "✗ No data extracted. Please extract data first.", "", None
+
+    if not form_url or not form_url.strip():
+        return "✗ Please provide a valid form URL.", "", None
 
     try:
-        status = "Populating web form using Browserbase..."
+        status = f"Populating web form at {form_url}..."
 
         # Populate form using FormPopulator with Browserbase
-        form_populator = FormPopulator()
-        screenshot_path = form_populator.populate_form(current_extracted_data)
+        form_populator = FormPopulator(form_url=form_url)
+        result = form_populator.populate_form(current_extracted_data)
 
-        status = "✓ Form populated successfully (not submitted)"
+        # Extract results
+        screenshot_path = result["screenshot"]
+        session_url = result["session_url"]
+        session_id = result["session_id"]
+        fields_filled = result["fields_filled"]
 
-        return status, screenshot_path
+        status = f"""✓ Form populated successfully ({fields_filled} fields filled)
+
+Form URL: {form_url}
+Session ID: {session_id}
+
+Note: Browser session remains open for inspection.
+Click the link below to view the live session."""
+
+        # Create clickable HTML link that opens in new tab
+        session_html = f"""
+        <div style="padding: 15px; background-color: #f0f9ff; border: 2px solid #0284c7; border-radius: 8px; margin: 10px 0;">
+            <h3 style="margin: 0 0 10px 0; color: #0284c7;">🔗 Live Browser Session</h3>
+            <a href="{session_url}" target="_blank" style="
+                display: inline-block;
+                padding: 12px 24px;
+                background-color: #0284c7;
+                color: white;
+                text-decoration: none;
+                border-radius: 6px;
+                font-weight: bold;
+                font-size: 16px;
+            ">
+                Open Browserbase Session →
+            </a>
+            <p style="margin: 10px 0 0 0; font-size: 14px; color: #64748b;">
+                Session ID: <code>{session_id}</code>
+            </p>
+        </div>
+        """
+
+        return status, session_html, screenshot_path
 
     except Exception as e:
-        return f"✗ Form population error: {str(e)}", None
+        return f"✗ Form population error: {str(e)}", "", None
 
 
 # Gradio interface
 with gr.Blocks(title="Alma Assignment") as interface:
     gr.Markdown("# Alma Assignment: Document Processing")
     gr.Markdown(
-        "Upload passport and G-28 documents to automatically extract data and populate the form using Browserbase")
+        "Upload passport and G-28 documents to automatically extract data and populate any web form using Browserbase")
     with gr.Row():
         with gr.Column():
             gr.Markdown("### Upload Documents")
@@ -229,6 +266,16 @@ with gr.Blocks(title="Alma Assignment") as interface:
                 file_types=[".pdf", ".jpg", ".jpeg", ".png"],
                 type="filepath"
             )
+
+            gr.Markdown("### Form Configuration")
+            form_url_input = gr.Textbox(
+                label="Target Form URL",
+                value="https://mendrika-alma.github.io/form-submission/",
+                placeholder="Enter the URL of the web form to populate",
+                info="The web form where extracted data will be automatically filled",
+                lines=1
+            )
+
             with gr.Row():
                 extract_btn = gr.Button(
                     "Extract Data", variant="primary", size="lg")
@@ -236,7 +283,7 @@ with gr.Blocks(title="Alma Assignment") as interface:
                     "Clear", variant="secondary", size="lg")
 
             submit_btn = gr.Button(
-                "Populate Form", variant="primary", size="lg", visible=False)
+                "Submit Form", variant="primary", size="lg", visible=False)
 
         with gr.Column():
             gr.Markdown("### Results")
@@ -244,6 +291,10 @@ with gr.Blocks(title="Alma Assignment") as interface:
                 label="Status",
                 lines=3,
                 interactive=False
+            )
+            session_link_output = gr.HTML(
+                label="Browserbase Session",
+                visible=False
             )
             data_output = gr.JSON(
                 label="Extracted Data"
@@ -260,28 +311,32 @@ with gr.Blocks(title="Alma Assignment") as interface:
         outputs=[status_output, data_output, submit_btn]
     )
 
-    # Populate Form button click
+    # Submit Form button click
     submit_btn.click(
         fn=submit_form,
-        inputs=[],
-        outputs=[status_output, screenshot_output]
+        inputs=[form_url_input],
+        outputs=[status_output, session_link_output, screenshot_output]
     )
 
     # Clear button click
     clear_btn.click(
-        fn=lambda: (None, None, "", None, None, gr.update(visible=False)),
+        fn=lambda: (None, None, "https://mendrika-alma.github.io/form-submission/",
+                    "", "", None, None, gr.update(visible=False)),
         inputs=[],
-        outputs=[passport_input, g28_input, status_output,
-                 data_output, screenshot_output, submit_btn]
+        outputs=[passport_input, g28_input, form_url_input, status_output,
+                 session_link_output, data_output, screenshot_output, submit_btn]
     )
 
     gr.Markdown("""
     ---
     ### Instructions:
     1. Upload a passport document (PDF or image format: JPG, PNG)
-    2. Upload a G-28 form (PDF or image format: JPG, PNG)  
-    3. Click "Extract Data" to extract information using Google Gemini
-    4. Click "Populate Form" to populate the form at https://mendrika-alma.github.io/form-submission/ using Browserbase
+    2. Upload a G-28 form (PDF or image format: JPG, PNG)
+    3. (Optional) Customize the target form URL - defaults to the test form
+    4. Click "Extract Data" to extract information using Google Gemini
+    5. Click "Submit Form" to populate the web form using Browserbase
+    
+    **Note:** The form will be populated but NOT submitted (as per requirements)
     """)
 
 main_app = gr.mount_gradio_app(main_app, interface, path="/")
