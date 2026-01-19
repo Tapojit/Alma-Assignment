@@ -145,7 +145,19 @@ class FormPopulator:
             print(f"  Using LLM for {len(remaining_data)} remaining fields...")
             llm_commands = self._generate_llm_commands(
                 form_html, remaining_data)
-            commands.extend(llm_commands)
+
+            # Filter out LLM commands targeting selectors already filled
+            filled_selectors = {cmd.get('selector') for cmd in commands}
+            llm_commands_filtered = [
+                cmd for cmd in llm_commands
+                if cmd.get('selector') not in filled_selectors
+            ]
+
+            if len(llm_commands) != len(llm_commands_filtered):
+                print(
+                    f"  Filtered {len(llm_commands) - len(llm_commands_filtered)} LLM commands (duplicate selectors)")
+
+            commands.extend(llm_commands_filtered)
 
         print(f"  Total commands generated: {len(commands)}")
         return commands
