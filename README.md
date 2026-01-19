@@ -2,7 +2,7 @@
 
 Extracts data from passport + G-28 PDFs using Gemini 3 Flash, then auto-fills any web form using Browserbase.
 
-## [Updated]Loom Recording URL: https://www.loom.com/share/3fa169c38a894a2c9a94991a21198447
+## [Updated] Loom Recording URL: https://www.loom.com/share/3fa169c38a894a2c9a94991a21198447
 
 ## Local Setup
 
